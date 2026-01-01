@@ -48,6 +48,11 @@ const statusColors = {
     cancelled: "bg-red-50 text-red-700 border-red-200",
 }
 
+// Required for static export (Capacitor)
+export async function generateStaticParams() {
+    return []
+}
+
 export default function OrderDetailsPage() {
     const router = useRouter()
     const params = useParams()

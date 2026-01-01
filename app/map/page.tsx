@@ -1,0 +1,191 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import dynamic from "next/dynamic"
+import { useSearchParams } from "next/navigation"
+import { Menu, Navigation } from "lucide-react"
+import { supabase, type Order, type Driver } from "@/lib/supabase"
+import { useTheme } from "next-themes"
+import { Button } from "@/components/ui/button"
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { FleetPanel } from "@/components/map/fleet-panel"
+
+// Dynamically import the map component to avoid SSR issues
+const InteractiveMap = dynamic(
+    () => import("@/components/map/interactive-map"),
+    {
+        loading: () => (
+            <div className="h-full w-full flex items-center justify-center bg-muted/20">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+            </div>
+        ),
+        ssr: false
+    }
+)
+
+export default function MapPage() {
+    const { theme } = useTheme()
+    const searchParams = useSearchParams()
+
+    // Data State
+    const [orders, setOrders] = useState<Order[]>([])
+    const [drivers, setDrivers] = useState<Driver[]>([])
+    const [isLoading, setIsLoading] = useState(true)
+
+    // UI State
+    const [selectedDriverId, setSelectedDriverId] = useState<string | null>(searchParams.get('driverId'))
+    const [userLocation, setUserLocation] = useState<[number, number] | null>(null)
+    const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false)
+
+    // Initial Load & Subscription
+    useEffect(() => {
+        // Get User Location
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => setUserLocation([position.coords.latitude, position.coords.longitude]),
+                () => setUserLocation([30.0444, 31.2357]) // Default Cairo
+            )
+        } else {
+            setUserLocation([30.0444, 31.2357])
+        }
+
+        fetchData()
+
+        // Real-time Subscriptions
+        const orderSub = supabase
+            .channel('orders-map-v2')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchData())
+            .subscribe()
+
+        const driverSub = supabase
+            .channel('drivers-map-v2')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, (payload) => {
+                if (payload.new && (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT')) {
+                    const newDriver = payload.new as Driver
+                    setDrivers(prev => {
+                        // Optimistic update for smooth animation
+                        const exists = prev.find(d => d.id === newDriver.id)
+                        if (exists) return prev.map(d => d.id === newDriver.id ? newDriver : d)
+                        return [...prev, newDriver]
+                    })
+                }
+            })
+            .subscribe()
+
+        return () => {
+            orderSub.unsubscribe()
+            driverSub.unsubscribe()
+        }
+    }, [])
+
+    async function fetchData() {
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) return
+
+            const { data: userProfile } = await supabase
+                .from('users')
+                .select('company_id, role')
+                .eq('id', user.id)
+                .maybeSingle()
+
+            if (!userProfile) return
+
+            // Driver: Only see own stuff
+            if (userProfile.role === 'driver') {
+                const { data: driverData } = await supabase.from('drivers').select('id').eq('user_id', user.id).maybeSingle()
+                if (driverData) {
+                    setSelectedDriverId(driverData.id) // Auto-select self
+                    const { data } = await supabase.from('orders').select('*').eq('driver_id', driverData.id)
+                    setOrders(data || [])
+                }
+            } else {
+                // Manager: See all
+                const { data: ordersData } = await supabase
+                    .from('orders')
+                    .select('*')
+                    .eq('company_id', userProfile.company_id)
+
+                const { data: driversData } = await supabase
+                    .from('drivers')
+                    .select('*')
+                    .eq('company_id', userProfile.company_id)
+
+                setOrders(ordersData || [])
+                setDrivers(driversData || [])
+            }
+        } catch (error) {
+            console.error('Error fetching map data:', error)
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    const handleDriverSelect = (id: string | null) => {
+        setSelectedDriverId(id)
+        setIsMobilePanelOpen(false) // Close sheet on mobile selection
+    }
+
+    return (
+        <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-background relative">
+            {/* Desktop Sidebar */}
+            <div className="hidden md:block w-80 shrink-0 h-full z-20 shadow-xl border-t">
+                <FleetPanel
+                    drivers={drivers}
+                    orders={orders}
+                    selectedDriverId={selectedDriverId}
+                    onSelectDriver={handleDriverSelect}
+                />
+            </div>
+
+            {/* Mobile Sheet Trigger */}
+            <div className="md:hidden absolute top-4 left-4 z-[400]">
+                <Sheet open={isMobilePanelOpen} onOpenChange={setIsMobilePanelOpen}>
+                    <SheetTrigger asChild>
+                        <Button variant="secondary" size="icon" className="shadow-lg h-12 w-12 rounded-full border border-primary/20">
+                            <Menu className="h-6 w-6" />
+                        </Button>
+                    </SheetTrigger>
+                    <SheetContent side="bottom" className="h-[60vh] p-0 rounded-t-xl z-[1000]">
+                        <FleetPanel
+                            drivers={drivers}
+                            orders={orders}
+                            selectedDriverId={selectedDriverId}
+                            onSelectDriver={handleDriverSelect}
+                        />
+                    </SheetContent>
+                </Sheet>
+            </div>
+
+            {/* Main Map Area */}
+            <div className="flex-1 relative h-full">
+                <InteractiveMap
+                    orders={orders}
+                    drivers={drivers}
+                    selectedDriverId={selectedDriverId}
+                    userLocation={userLocation}
+                />
+
+                {/* Info Overlay (Visible when Driver Selected) */}
+                {selectedDriverId && (
+                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 md:left-6 md:translate-x-0 bg-background/90 backdrop-blur border border-border p-3 rounded-lg shadow-lg z-[400] max-w-[90vw] flex items-center gap-4">
+                        <div className="text-sm">
+                            <span className="text-muted-foreground mr-1">Focusing:</span>
+                            <span className="font-bold">
+                                {drivers.find(d => d.id === selectedDriverId)?.name || 'Driver'}
+                            </span>
+                        </div>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => setSelectedDriverId(null)}
+                        >
+                            Clear
+                        </Button>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}

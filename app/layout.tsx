@@ -1,0 +1,56 @@
+import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
+import "leaflet/dist/leaflet.css";
+import { MobileNav } from "@/components/mobile-nav";
+import AuthCheck from "@/components/auth-check";
+import { ThemeProvider } from "@/components/theme-provider";
+import { ToastProvider } from "@/components/toast-provider";
+
+const inter = Inter({ subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "Raute",
+  description: "Route optimization and delivery management",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Raute",
+  },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.className} antialiased h-screen overflow-hidden bg-background`}>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <ToastProvider>
+            <AuthCheck>
+              <main className="h-full overflow-y-auto pb-20">
+                {children}
+              </main>
+              <MobileNav />
+            </AuthCheck>
+          </ToastProvider>
+        </ThemeProvider>
+      </body>
+    </html>
+  );
+}

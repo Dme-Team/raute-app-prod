@@ -1,0 +1,109 @@
+import { createClient } from '@supabase/supabase-js'
+
+// Get environment variables
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+// Create Supabase client with session persistence (for regular operations)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+        persistSession: true,
+        storageKey: 'raute-auth',
+        storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    }
+})
+
+// Create Admin Client (Server-side only, uses Service Role Key)
+// ⚠️ NEVER expose this client or the Service Role Key to the browser
+export const supabaseAdmin = supabaseServiceRoleKey
+    ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+        auth: {
+            autoRefreshToken: false,
+            persistSession: false
+        }
+    })
+    : supabase // Fallback to regular client if Service Role Key is not set
+
+// Database Types (for TypeScript)
+export type Company = {
+    id: string
+    name: string
+    created_at: string
+    updated_at: string
+}
+
+export type User = {
+    id: string
+    company_id: string
+    email: string
+    full_name: string
+    role: 'admin' | 'manager' | 'driver'
+    created_at: string
+    updated_at: string
+}
+
+export type Driver = {
+    id: string
+    company_id: string
+    user_id: string | null
+    name: string
+    phone: string | null
+    vehicle_type: string | null
+    status: 'active' | 'inactive'
+    is_online?: boolean
+    custom_values?: Record<string, any>
+    default_start_address?: string | null
+    default_start_lat?: number | null
+    default_start_lng?: number | null
+    current_lat?: number | null
+    current_lng?: number | null
+    last_location_update?: string | null
+    created_at: string
+    updated_at: string
+}
+
+export type CustomField = {
+    id: string
+    company_id: string
+    entity_type: 'order' | 'driver'
+    field_name: string
+    field_type: 'text' | 'number' | 'date' | 'select' | 'textarea'
+    field_label: string
+    placeholder?: string
+    options?: string[] // For select type
+    is_required: boolean
+    driver_visible: boolean // Show to drivers by default?
+    display_order: number
+    created_at: string
+    updated_at: string
+}
+
+export type Order = {
+    id: string
+    company_id: string
+    driver_id: string | null
+    order_number: string
+    customer_name: string
+    address: string
+    city: string | null
+    state: string | null
+    zip_code: string | null
+    phone: string | null
+    delivery_date: string | null
+    status: 'pending' | 'assigned' | 'in_progress' | 'delivered' | 'cancelled'
+    priority: number
+    notes: string | null
+    latitude: number | null
+    longitude: number | null
+    custom_fields: Record<string, any> // Dynamic custom field values
+    driver_visible_overrides: string[] // Field IDs to show to driver for this order
+    route_index?: number | null // For route sequencing (1, 2, 3...)
+    locked_to_driver?: boolean // If true, AI won't unassign
+    time_window_start?: string | null // HH:MM:SS
+    time_window_end?: string | null // HH:MM:SS
+    delivered_at: string | null
+    created_at: string
+    updated_at: string
+}
+

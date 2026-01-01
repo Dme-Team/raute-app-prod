@@ -1,0 +1,42 @@
+{
+    "nav": {
+        "home": "Home",
+        "orders": "Orders",
+        "drivers": "Drivers",
+        "map": "Map",
+        "profile": "Profile",
+        "settings": "Settings"
+    },
+    "orders": {
+        "title": "All Orders",
+        "description": "Manage company deliveries",
+        "addOrder": "Add Order",
+        "settings": "Settings",
+        "delete": "Delete",
+        "searchPlaceholder": "Search orders...",
+        "noOrders": "No orders found",
+        "aiSmartImport": "AI Smart Import",
+        "manualEntry": "Manual Entry"
+    },
+    "settings": {
+        "title": "Settings",
+        "description": "Manage your orders settings and preferences",
+        "appearance": "Appearance",
+        "appearanceDesc": "Customize app theme",
+        "darkMode": "Dark Mode",
+        "darkModeDesc": "Switch between light and dark theme",
+        "customFields": "Custom Fields",
+        "customFieldsDesc": "Define fields that will appear in your order forms"
+    },
+    "common": {
+        "save": "Save",
+        "cancel": "Cancel",
+        "delete": "Delete",
+        "edit": "Edit",
+        "add": "Add",
+        "create": "Create",
+        "loading": "Loading...",
+        "success": "Success",
+        "error": "Error"
+    }
+}

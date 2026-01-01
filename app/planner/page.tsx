@@ -533,7 +533,7 @@ export default function PlannerPage() {
                             </div>
 
                             <div className="pt-4 border-t">
-                                <Button className="w-full" onClick={() => window.open(`/orders/${selectedOrder.id}`, '_blank')}>
+                                <Button className="w-full" onClick={() => window.open(`/order-details?id=${selectedOrder.id}`, '_blank')}>
                                     <ExternalLink size={14} className="mr-2" />
                                     Open Full Editor
                                 </Button>

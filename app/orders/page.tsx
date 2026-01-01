@@ -556,7 +556,7 @@ export default function OrdersPage() {
                                 .map((order, index) => {
                                     const isNext = index === 0 && (order.status === 'assigned' || order.status === 'pending')
                                     return (
-                                        <Link key={order.id} href={`/orders/${order.id}`} className="block group">
+                                        <Link key={order.id} href={`/order-details?id=${order.id}`} className="block group">
                                             <div className={cn(
                                                 "bg-card p-5 rounded-2xl shadow-sm border transition-all relative overflow-hidden",
                                                 isNext ? "border-primary shadow-md ring-1 ring-primary/20" : "border-border hover:shadow-md hover:border-primary/50"
@@ -917,7 +917,7 @@ export default function OrdersPage() {
                                 }}
                                 className="mt-6 w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-2 focus:ring-primary cursor-pointer flex-shrink-0 accent-primary"
                             />
-                            <Link href={`/orders/${order.id}`} className="flex-1">
+                            <Link href={`/order-details?id=${order.id}`} className="flex-1">
                                 <div className="bg-card p-5 rounded-xl shadow-sm border border-border space-y-3 hover:shadow-md hover:border-primary/50 transition-all cursor-pointer relative overflow-hidden">
                                     {/* Status Stripe */}
                                     <div className={cn("absolute left-0 top-0 bottom-0 w-1",

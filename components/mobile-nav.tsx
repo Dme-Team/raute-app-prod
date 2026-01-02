@@ -94,18 +94,16 @@ export function MobileNav() {
     // to prevent leaking manager tabs
 
     return (
-        <div className="fixed bottom-0 left-0 right-0 z-[9999] bg-white border-t border-border pb-safe safe-area-bottom shadow-lg">
+        <div className="fixed bottom-0 left-0 right-0 z-[9999] bg-white dark:bg-slate-950 border-t border-border dark:border-slate-800 pb-safe safe-area-bottom shadow-lg transition-colors">
             <div className={`flex items-center justify-around h-16 max-w-lg mx-auto ${isDriver ? 'px-8' : ''}`}>
 
-                {/* 1. Home / Dashboard (Managers Only) */}
-                {isManager && (
-                    <NavItem
-                        href="/dashboard"
-                        icon={Home}
-                        label="Home"
-                        active={isActive('/dashboard')}
-                    />
-                )}
+                {/* 1. Home / Dashboard (Everyone) */}
+                <NavItem
+                    href="/dashboard"
+                    icon={Home}
+                    label="Home"
+                    active={isActive('/dashboard')}
+                />
 
                 {/* 2. Orders (Everyone) */}
                 <NavItem
@@ -132,6 +130,16 @@ export function MobileNav() {
                         icon={Route}
                         label="Planner"
                         active={isActive('/planner')}
+                    />
+                )}
+
+                {/* 3.6 Dispatchers (Managers Only) */}
+                {isManager && (
+                    <NavItem
+                        href="/dispatchers"
+                        icon={User}
+                        label="Team"
+                        active={isActive('/dispatchers')}
                     />
                 )}
 
@@ -162,11 +170,11 @@ function NavItem({ href, icon: Icon, label, active }: { href: string, icon: any,
             className={cn(
                 "flex flex-col items-center justify-center w-full h-full space-y-1 transition-all duration-200 select-none touch-manipulation",
                 active
-                    ? "text-blue-600 scale-105" // Explicit Active Color
-                    : "text-slate-500 hover:text-slate-900 active:scale-95" // Explicit Inactive Color
+                    ? "text-blue-600 dark:text-blue-400 scale-105" // Explicit Active Color
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 active:scale-95" // Explicit Inactive Color
             )}
         >
-            <Icon size={24} strokeWidth={active ? 2.5 : 2} className={active ? "fill-blue-100" : "fill-none"} />
+            <Icon size={24} strokeWidth={active ? 2.5 : 2} className={active ? "fill-blue-100 dark:fill-blue-900/30" : "fill-none"} />
             <span className="text-[10px] font-medium tracking-tight">{label}</span>
         </Link>
     )

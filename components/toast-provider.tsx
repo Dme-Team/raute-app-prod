@@ -39,6 +39,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         setToasts(prev => prev.filter(t => t.id !== id))
     }, [])
 
+    React.useEffect(() => {
+        const handleExternalToast = (event: any) => {
+            if (event.detail) addToast(event.detail)
+        }
+        window.addEventListener('app-toast', handleExternalToast)
+        return () => window.removeEventListener('app-toast', handleExternalToast)
+    }, [addToast])
+
     return (
         <ToastContext.Provider value={{ toast: addToast }}>
             {children}

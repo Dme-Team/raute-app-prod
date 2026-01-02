@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter, useParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { ArrowLeft, MapPin, Calendar, User as UserIcon, Phone, Package, Edit, Trash2, Clock, Undo2, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { supabase, type Order } from "@/lib/supabase"
@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
+import { offlineManager } from '@/lib/offline-manager'
+import { geoService } from '@/lib/geo-service'
 
 // Dynamically import map to avoid SSR issues
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false })
@@ -26,17 +28,18 @@ const Marker = dynamic(() => import('react-leaflet').then(mod => mod.Marker), { 
 const Popup = dynamic(() => import('react-leaflet').then(mod => mod.Popup), { ssr: false })
 
 // Fix Leaflet issue
-if (typeof window !== 'undefined') {
-    const L = require('leaflet')
-    // Only delete specific prototypes if they exist to be safe
-    if (L.Icon.Default.prototype._getIconUrl) {
-        delete (L.Icon.Default.prototype as any)._getIconUrl
+const fixLeafletIcons = () => {
+    if (typeof window !== 'undefined') {
+        const L = require('leaflet')
+        if (L.Icon.Default.prototype._getIconUrl) {
+            delete (L.Icon.Default.prototype as any)._getIconUrl
+        }
+        L.Icon.Default.mergeOptions({
+            iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+            iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+        })
     }
-    L.Icon.Default.mergeOptions({
-        iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-        iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-    })
 }
 
 const statusColors = {
@@ -49,8 +52,8 @@ const statusColors = {
 
 export default function ClientOrderDetails() {
     const router = useRouter()
-    const params = useParams()
-    const orderId = params.id as string
+    const searchParams = useSearchParams()
+    const orderId = searchParams.get('id')
 
     const [order, setOrder] = useState<Order | null>(null)
     const [isLoading, setIsLoading] = useState(true)
@@ -62,12 +65,14 @@ export default function ClientOrderDetails() {
     const [drivers, setDrivers] = useState<any[]>([])
 
     useEffect(() => {
+        fixLeafletIcons()
         if (orderId) {
             fetchOrder()
         }
     }, [orderId])
 
     async function fetchOrder() {
+        if (!orderId) return
         try {
             setIsLoading(true)
             const { data: { user } } = await supabase.auth.getUser()
@@ -108,19 +113,65 @@ export default function ClientOrderDetails() {
         }
     }
 
+
+    // Helper to calc distance in meters
+    function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+        const R = 6371e3; // metres
+        const φ1 = lat1 * Math.PI / 180;
+        const φ2 = lat2 * Math.PI / 180;
+        const Δφ = (lat2 - lat1) * Math.PI / 180;
+        const Δλ = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+    }
+
     async function updateOrderStatus(newStatus: string) {
-        if (!order) return
+        if (!order || !orderId) return
         try {
-            const updates: any = { status: newStatus }
+            let locationPayload = null
+            let isOutOfRange = false
+            let dist = 0
+
+            // 📍 Anti-Fraud: Capture Location & Soft Check
             if (newStatus === 'delivered') {
-                updates.delivered_at = new Date().toISOString()
-            } else if (order.status === 'delivered' && newStatus !== 'delivered') {
-                updates.delivered_at = null
+                const loc = await geoService.getCurrentLocation()
+                if (loc) {
+                    locationPayload = { lat: loc.lat, lng: loc.lng }
+
+                    // Check distance if order has lat/lng
+                    if (order.latitude && order.longitude) {
+                        dist = getDistanceMeters(loc.lat, loc.lng, order.latitude, order.longitude)
+                        console.log("Delivery Distance:", dist)
+
+                        // Flag if > 500 meters (approx 0.3 miles)
+                        if (dist > 500) {
+                            isOutOfRange = true
+                            // toast({ title: "Location Warning", description: "You are far from the destination, but delivery is saved.", type: "info" })
+                        }
+                    }
+                }
             }
-            const { error } = await supabase.from('orders').update(updates).eq('id', orderId)
-            if (error) throw error
-            fetchOrder()
-        } catch (error) { alert('Failed to update status') }
+
+            await offlineManager.queueAction('UPDATE_ORDER_STATUS', {
+                orderId,
+                status: newStatus,
+                location: locationPayload,
+                outOfRange: isOutOfRange,
+                distance: dist
+            })
+
+            // Optimistic Update
+            setOrder(prev => prev ? {
+                ...prev,
+                status: newStatus as any,
+                delivered_at: newStatus === 'delivered' ? new Date().toISOString() : prev.delivered_at,
+            } : null)
+
+        } catch (error) {
+            alert('Failed to update status')
+            console.error(error)
+        }
     }
 
     async function geocodeAddress(address: string, city?: string, state?: string, zipCode?: string): Promise<{ lat: number; lon: number } | null> {
@@ -133,14 +184,30 @@ export default function ClientOrderDetails() {
             return null
         } catch (error) { return null }
     }
+
     async function handleDelete() {
+        if (!orderId) return
         try { setIsDeleting(true); const { error } = await supabase.from('orders').delete().eq('id', orderId); if (error) throw error; router.push('/orders') } catch (error) { console.error(error) } finally { setIsDeleting(false) }
     }
+
     async function handleEdit(formData: FormData) {
+        if (!orderId) return
         try { setIsUpdating(true); const address = formData.get('address') as string; const city = formData.get('city') as string; const state = formData.get('state') as string; const zipCode = formData.get('zip_code') as string; const coords = await geocodeAddress(address, city, state, zipCode); const updatedOrder = { order_number: formData.get('order_number') as string, customer_name: formData.get('customer_name') as string, address, city, state, zip_code: zipCode, phone: formData.get('phone') as string, delivery_date: formData.get('delivery_date') as string, notes: formData.get('notes') as string, latitude: coords?.lat || null, longitude: coords?.lon || null, }; const { error } = await supabase.from('orders').update(updatedOrder).eq('id', orderId); if (error) throw error; setIsEditSheetOpen(false); fetchOrder() } catch (error) { alert('Failed update') } finally { setIsUpdating(false) }
     }
+
     function getMarkerColor(status: string) { const colors = { pending: '#eab308', assigned: '#3b82f6', in_progress: '#a855f7', delivered: '#22c55e', cancelled: '#ef4444' }; return colors[status as keyof typeof colors] || '#3b82f6' }
-    function createColoredIcon(status: string) { if (typeof window === 'undefined') return undefined; const L = require('leaflet'); return new L.divIcon({ className: 'custom-marker', html: `<svg width="32" height="42" viewBox="0 0 32 42" xmlns="http://www.w3.org/2000/svg"><path d="M16 0C7.2 0 0 7.2 0 16c0 11 16 26 16 26s16-15 16-26c0-8.8-7.2-16-16-16z" fill="${getMarkerColor(status)}" stroke="white" stroke-width="2"/><circle cx="16" cy="16" r="6" fill="white"/></svg>`, iconSize: [32, 42], iconAnchor: [16, 42], popupAnchor: [0, -42] }) }
+
+    function createColoredIcon(status: string) {
+        if (typeof window === 'undefined') return undefined;
+        const L = require('leaflet');
+        return new L.divIcon({
+            className: 'custom-marker',
+            html: `<svg width="32" height="42" viewBox="0 0 32 42" xmlns="http://www.w3.org/2000/svg"><path d="M16 0C7.2 0 0 7.2 0 16c0 11 16 26 16 26s16-15 16-26c0-8.8-7.2-16-16-16z" fill="${getMarkerColor(status)}" stroke="white" stroke-width="2"/><circle cx="16" cy="16" r="6" fill="white"/></svg>`,
+            iconSize: [32, 42],
+            iconAnchor: [16, 42],
+            popupAnchor: [0, -42]
+        })
+    }
 
     if (isLoading) return <div className="p-4 flex items-center justify-center h-screen"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>
     if (!order) return <div className="p-4 flex flex-col items-center justify-center h-screen"><Package className="h-12 w-12 text-slate-300 mb-3" /><p className="text-slate-500">Order not found</p><Button onClick={() => router.push('/orders')} className="mt-4">Back to Orders</Button></div>
@@ -152,7 +219,7 @@ export default function ClientOrderDetails() {
                 <div className="p-4 flex items-center gap-3">
                     <Button variant="ghost" size="sm" onClick={() => router.back()} className="h-9 w-9 p-0 rounded-full hover:bg-slate-100"><ArrowLeft size={20} /></Button>
                     <div className="flex-1"><h1 className="text-base font-bold text-slate-900 leading-tight">#{order.order_number}</h1><p className="text-xs text-slate-500">{order.customer_name}</p></div>
-                    <span className={`px-3 py-1 text-xs font-bold rounded-full border uppercase tracking-wider ${statusColors[order.status]}`}>{order.status.replace("_", " ")}</span>
+                    <span className={`px-3 py-1 text-xs font-bold rounded-full border uppercase tracking-wider ${statusColors[order.status as keyof typeof statusColors]}`}>{order.status.replace("_", " ")}</span>
                 </div>
             </div>
 

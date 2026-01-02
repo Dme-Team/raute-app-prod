@@ -1,0 +1,397 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { supabase, User as AppUser } from '@/lib/supabase' // Use our type alias
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/password-input'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { UserCog, Plus, Trash2, Power, Lock, Unlock, ShieldAlert } from 'lucide-react'
+import { useToast } from '@/components/toast-provider'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+
+// Permission Config
+const AVAILABLE_PERMISSIONS = [
+    { id: 'view_orders', label: 'View All Orders' },
+    { id: 'create_orders', label: 'Create/Import Orders' },
+    { id: 'edit_orders', label: 'Edit Order Details' },
+    { id: 'delete_orders', label: 'Delete Orders' },
+    { id: 'view_drivers', label: 'View Drivers & Map' },
+    { id: 'manage_drivers', label: 'Manage Drivers (Add/Edit)' },
+    { id: 'access_settings', label: 'Access Company Settings' }
+]
+
+export default function DispatchersPage() {
+    const [dispatchers, setDispatchers] = useState<AppUser[]>([])
+    const [isLoading, setIsLoading] = useState(true)
+    const [isAddOpen, setIsAddOpen] = useState(false)
+    const { toast } = useToast()
+
+    // Form State
+    const [formData, setFormData] = useState({
+        name: '',
+        email: '',
+        password: '',
+        permissions: {
+            view_orders: true, // Default
+            view_drivers: true
+        } as Record<string, boolean>
+    })
+
+    useEffect(() => {
+        fetchDispatchers()
+    }, [])
+
+    async function fetchDispatchers() {
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) return
+
+            const { data: currentUser } = await supabase.from('users').select('company_id').eq('id', user.id).single()
+            if (!currentUser) return
+
+            const { data, error } = await supabase
+                .from('users')
+                .select('*')
+                .eq('company_id', currentUser.company_id)
+                .eq('role', 'dispatcher')
+                .order('created_at', { ascending: false })
+
+            if (error) throw error
+            setDispatchers((data as unknown as AppUser[]) || [])
+        } catch (error) {
+            console.error('Error fetching dispatchers:', error)
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    const [isSubmitting, setIsSubmitting] = useState(false)
+    const [editingDispatcher, setEditingDispatcher] = useState<AppUser | null>(null)
+    const [deletingDispatcher, setDeletingDispatcher] = useState<AppUser | null>(null)
+
+    // Helper to open Edit Sheet
+    function openEdit(dispatcher: AppUser) {
+        setEditingDispatcher(dispatcher)
+        setFormData({
+            name: dispatcher.full_name || '',
+            email: dispatcher.email || '',
+            password: '', // Leave blank if not changing
+            permissions: (dispatcher.permissions as Record<string, boolean>) || {}
+        })
+        setIsAddOpen(true)
+    }
+
+    // Helper to initiate delete
+    function initiateDelete(dispatcher: AppUser) {
+        setDeletingDispatcher(dispatcher)
+    }
+
+    async function handleDeleteDispatcher() {
+        if (!deletingDispatcher) return
+        try {
+            const response = await fetch(`/api/manage-dispatcher?id=${deletingDispatcher.id}`, { method: 'DELETE' })
+            if (!response.ok) throw new Error('Failed to delete')
+
+            setDispatchers(prev => prev.filter(d => d.id !== deletingDispatcher.id))
+            toast({ title: 'Dispatcher Deleted', type: 'success' })
+            setDeletingDispatcher(null)
+        } catch (e) {
+            toast({ title: 'Delete Failed', type: 'error' })
+        }
+    }
+
+    async function handleSubmit() {
+        if (editingDispatcher) {
+            // UPDATE MODE
+            setIsSubmitting(true)
+            try {
+                const response = await fetch('/api/manage-dispatcher', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: editingDispatcher.id,
+                        name: formData.name,
+                        email: formData.email,
+                        password: formData.password,
+                        permissions: formData.permissions
+                    })
+                })
+
+                if (!response.ok) throw new Error('Update failed')
+
+                toast({ title: 'Dispatcher Updated', type: 'success' })
+                setIsAddOpen(false)
+                setEditingDispatcher(null)
+                fetchDispatchers()
+            } catch (e) {
+                toast({ title: 'Update Error', type: 'error' })
+            } finally {
+                setIsSubmitting(false)
+            }
+        } else {
+            // CREATE MODE
+            handleCreateDispatcher()
+        }
+    }
+
+    async function handleCreateDispatcher() {
+        console.log("Create button clicked")
+        if (!formData.name || !formData.email || !formData.password) {
+            toast({ title: 'Missing Fields', description: 'Please fill in all required fields.', type: 'error' })
+            return
+        }
+
+        setIsSubmitting(true)
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error("No authenticated user found")
+
+            // Debug log
+            console.log("Fetching company for user:", user.id)
+
+            const { data: currentUser, error: userError } = await supabase
+                .from('users')
+                .select('company_id')
+                .eq('id', user.id)
+                .single()
+
+            if (userError || !currentUser) {
+                console.error("User fetch error:", userError)
+                throw new Error("Could not fetch your company profile. Please refresh.")
+            }
+
+            console.log("Sending request to API with companyId:", currentUser.company_id)
+
+            const response = await fetch('/api/create-dispatcher', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: formData.name,
+                    email: formData.email,
+                    password: formData.password,
+                    companyId: currentUser.company_id,
+                    permissions: formData.permissions
+                })
+            })
+
+            const result = await response.json()
+            console.log("API Response:", result)
+
+            if (!response.ok) throw new Error(result.error || "Failed to create dispatcher")
+
+            toast({
+                title: 'Dispatcher Created!',
+                description: `Successfully created account for ${formData.email}`,
+                type: 'success'
+            })
+
+            setIsAddOpen(false)
+            setFormData({ name: '', email: '', password: '', permissions: { view_orders: true, view_drivers: true } })
+            fetchDispatchers()
+
+        } catch (error: any) {
+            console.error("Handle Create Error:", error)
+            toast({
+                title: 'Error Creating Dispatcher',
+                description: error.message || "An unexpected error occurred",
+                type: 'error'
+            })
+        } finally {
+            setIsSubmitting(false)
+        }
+    }
+
+    async function toggleStatus(dispatcher: AppUser) {
+        const newStatus = dispatcher.status === 'suspended' ? 'active' : 'suspended'
+        try {
+            const { error } = await supabase
+                .from('users')
+                .update({ status: newStatus })
+                .eq('id', dispatcher.id)
+
+            if (error) throw error
+
+            setDispatchers(prev => prev.map(d => d.id === dispatcher.id ? { ...d, status: newStatus } : d))
+            toast({ title: `Account ${newStatus === 'active' ? 'Unfrozen' : 'Frozen'}`, type: 'success' })
+        } catch (error) {
+            toast({ title: 'Update Failed', type: 'error' })
+        }
+    }
+
+    /* 
+     * PERMISSIONS TOGGLE
+     * (Normally we'd have a separate edit modal, but for speed, let's just create logic.
+     *  For now, permissions are set on create. Updating them would require an update API or direct DB call.)
+     */
+
+    if (isLoading) return <div className="p-8"><Skeleton className="h-10 w-48 mb-4" /><Skeleton className="h-64 w-full" /></div>
+
+    return (
+        <div className="p-6 max-w-7xl mx-auto space-y-6 pb-20">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold">Dispatch Team</h1>
+                    <p className="text-slate-500">Manage dispatchers and their access limits.</p>
+                </div>
+                <Sheet open={isAddOpen} onOpenChange={(open) => {
+                    setIsAddOpen(open)
+                    if (!open) {
+                        setEditingDispatcher(null)
+                        setFormData({ name: '', email: '', password: '', permissions: { view_orders: true, view_drivers: true } })
+                    }
+                }}>
+                    <SheetTrigger asChild>
+                        <Button className="gap-2"><Plus size={16} /> Add Dispatcher</Button>
+                    </SheetTrigger>
+                    <SheetContent className="overflow-y-auto w-full sm:max-w-md">
+                        <SheetHeader>
+                            <SheetTitle>{editingDispatcher ? 'Edit Dispatcher' : 'Add New Dispatcher'}</SheetTitle>
+                        </SheetHeader>
+                        <div className="space-y-4 mt-6">
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Full Name</label>
+                                <Input
+                                    value={formData.name}
+                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                    placeholder="e.g. Sarah Smith"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Email</label>
+                                <Input
+                                    value={formData.email}
+                                    onChange={e => setFormData({ ...formData, email: e.target.value })}
+                                    placeholder="dispatcher@company.com"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Password {editingDispatcher && '(Leave blank to keep current)'}</label>
+                                <PasswordInput
+                                    value={formData.password}
+                                    onChange={e => setFormData({ ...formData, password: e.target.value })}
+                                    placeholder={editingDispatcher ? "••••••••" : "Create password"}
+                                />
+                            </div>
+
+                            <div className="pt-4 border-t">
+                                <label className="text-sm font-bold mb-3 block flex items-center gap-2">
+                                    <ShieldAlert size={14} /> Access Limitations
+                                </label>
+                                <div className="space-y-3">
+                                    {AVAILABLE_PERMISSIONS.map(perm => (
+                                        <div key={perm.id} className="flex items-center gap-2">
+                                            <Checkbox
+                                                id={perm.id}
+                                                checked={!!formData.permissions?.[perm.id]}
+                                                onCheckedChange={(checked) => {
+                                                    setFormData(prev => ({
+                                                        ...prev,
+                                                        permissions: {
+                                                            ...prev.permissions,
+                                                            [perm.id]: checked === true
+                                                        }
+                                                    }))
+                                                }}
+                                            />
+                                            <label htmlFor={perm.id} className="text-sm cursor-pointer select-none">
+                                                {perm.label}
+                                            </label>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <Button onClick={handleSubmit} className="w-full mt-4" disabled={isSubmitting}>
+                                {isSubmitting ? 'Saving...' : (editingDispatcher ? 'Save Changes' : 'Create Account')}
+                            </Button>
+                        </div>
+                    </SheetContent>
+                </Sheet>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {dispatchers.length === 0 && (
+                    <div className="col-span-full text-center py-12 border-2 border-dashed rounded-xl text-slate-400">
+                        No dispatchers found.
+                    </div>
+                )}
+
+                {dispatchers.map(dispatcher => (
+                    <Card key={dispatcher.id} className={dispatcher.status === 'suspended' ? 'opacity-70 bg-slate-50' : ''}>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-base font-bold flex items-center gap-2">
+                                <UserCog size={18} className="text-blue-600" />
+                                {dispatcher.full_name}
+                            </CardTitle>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full uppercase font-bold border ${dispatcher.status === 'suspended' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-green-100 text-green-700 border-green-200'}`}>
+                                {dispatcher.status || 'active'}
+                            </span>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-sm text-slate-500 mb-4">{dispatcher.email}</div>
+
+                            <div className="space-y-1 mb-4">
+                                <p className="text-xs font-bold uppercase text-slate-400">Permissions:</p>
+                                <div className="flex flex-wrap gap-1">
+                                    {Object.entries(dispatcher.permissions || {}).map(([key, val]) => (
+                                        val && <span key={key} className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">{key.replace('_', ' ')}</span>
+                                    ))}
+                                    {Object.keys(dispatcher.permissions || {}).length === 0 && <span className="text-xs italic text-red-500">Read Only</span>}
+                                </div>
+                            </div>
+
+                            <div className="flex gap-2 pt-2 border-t mt-auto">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={`flex-1 ${dispatcher.status === 'suspended' ? 'text-green-600 hover:text-green-700 hover:bg-green-50' : 'text-amber-600 hover:text-amber-700 hover:bg-amber-50'}`}
+                                    onClick={() => toggleStatus(dispatcher)}
+                                >
+                                    {dispatcher.status === 'suspended' ? <Unlock size={14} className="mr-1" /> : <Lock size={14} className="mr-1" />}
+                                    {dispatcher.status === 'suspended' ? 'Unfreeze' : 'Freeze'}
+                                </Button>
+
+                                <Button variant="outline" size="sm" onClick={() => openEdit(dispatcher)}>
+                                    <UserCog size={14} />
+                                </Button>
+
+                                <Button variant="destructive" size="sm" onClick={() => initiateDelete(dispatcher)}>
+                                    <Trash2 size={14} />
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                ))}
+            </div>
+
+            {/* DELETE ALERT */}
+            <AlertDialog open={!!deletingDispatcher} onOpenChange={() => setDeletingDispatcher(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Dispatcher?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to delete <b>{deletingDispatcher?.full_name}</b>? This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleDeleteDispatcher} className="bg-red-600">Delete Account</AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+        </div>
+    )
+}

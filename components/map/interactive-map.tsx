@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useMemo } from "react"
 import dynamic from "next/dynamic"
-import { MapPin, Package, Truck } from "lucide-react"
+import "leaflet/dist/leaflet.css"
+import { MapPin, Package, Truck, User } from "lucide-react"
 import type { Order, Driver } from "@/lib/supabase"
+import * as L from "leaflet" // Import Leaflet directly
 import { useTheme } from "next-themes"
 import type { MapControllerProps } from "@/components/map/map-controller"
 
-// Dynamic Leaflet Imports
+// Dynamic Leaflet Components
 const MapContainer = dynamic(
     () => import("react-leaflet").then((mod) => mod.MapContainer),
     { ssr: false }
@@ -28,16 +30,104 @@ const Polyline = dynamic(
     () => import("react-leaflet").then((mod) => mod.Polyline),
     { ssr: false }
 )
-// We need a component to handle map bounds updates
+
 const MapController = dynamic<MapControllerProps>(
     () => import("@/components/map/map-controller"),
     { ssr: false }
 )
 
-// Leaflet Setup
-function fixLeafletIcons() {
-    if (typeof window !== 'undefined') {
-        const L = require('leaflet')
+// -- Icon Generators --
+const createOrderIcon = (status: string, index?: number) => {
+    const colors = {
+        pending: '#eab308',
+        assigned: '#3b82f6',
+        in_progress: '#a855f7',
+        delivered: '#22c55e',
+        cancelled: '#ef4444',
+    }
+    const color = colors[status as keyof typeof colors] || '#3b82f6'
+
+    if (index !== undefined) {
+        return L.divIcon({
+            className: 'custom-marker',
+            html: `
+                <div style="
+                    background-color: ${color}; 
+                    color: white; 
+                    width: 28px; 
+                    height: 28px; 
+                    border-radius: 50%; 
+                    display: flex; 
+                    align-items: center; 
+                    justify-content: center; 
+                    font-weight: bold; 
+                    font-family: sans-serif;
+                    font-size: 14px;
+                    border: 2px solid white; 
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                ">
+                    ${index}
+                </div>
+            `,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+            popupAnchor: [0, -14]
+        })
+    }
+
+    return L.divIcon({
+        className: 'custom-marker',
+        html: `
+            <svg width="32" height="42" viewBox="0 0 32 42" xmlns="http://www.w3.org/2000/svg">
+                <path d="M16 0C7.2 0 0 7.2 0 16c0 11 16 26 16 26s16-15 16-26c0-8.8-7.2-16-16-16z" 
+                      fill="${color}" stroke="white" stroke-width="2"/>
+                <circle cx="16" cy="16" r="6" fill="white"/>
+            </svg>`,
+        iconSize: [32, 42], iconAnchor: [16, 42], popupAnchor: [0, -42]
+    })
+}
+
+const createDriverIcon = (isOnline: boolean) => {
+    return L.divIcon({
+        className: 'driver-marker',
+        html: `
+            <div style="
+                background-color: ${isOnline ? '#22c55e' : '#64748b'}; 
+                width: 36px; height: 36px; 
+                border-radius: 50%; 
+                display: flex; align-items: center; justify-content: center; 
+                border: 2px solid white; 
+                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            ">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/>
+                    <path d="M15 18H9"/>
+                    <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/>
+                    <circle cx="17" cy="18" r="2"/>
+                    <circle cx="7" cy="18" r="2"/>
+                </svg>
+            </div>`,
+        iconSize: [36, 36], iconAnchor: [18, 18], popupAnchor: [0, -20]
+    })
+}
+
+
+interface InteractiveMapProps {
+    orders: Order[]
+    drivers: Driver[]
+    selectedDriverId: string | null
+    userLocation: [number, number] | null
+    forceTheme?: 'light' | 'dark'
+}
+
+export default function InteractiveMap({ orders, drivers, selectedDriverId, userLocation, forceTheme }: InteractiveMapProps) {
+    const { theme } = useTheme()
+    // Use forced theme if provided, otherwise fallback to system theme
+    const currentTheme = forceTheme || theme
+    const isDark = currentTheme === 'dark'
+
+    // Fix default icons
+    useEffect(() => {
         // @ts-ignore
         delete L.Icon.Default.prototype._getIconUrl
         L.Icon.Default.mergeOptions({
@@ -45,106 +135,7 @@ function fixLeafletIcons() {
             iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
             shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
         })
-    }
-}
-
-interface InteractiveMapProps {
-    orders: Order[]
-    drivers: Driver[]
-    selectedDriverId: string | null
-    userLocation: [number, number] | null
-}
-
-export default function InteractiveMap({ orders, drivers, selectedDriverId, userLocation }: InteractiveMapProps) {
-    const { theme } = useTheme()
-
-    useEffect(() => {
-        fixLeafletIcons()
     }, [])
-
-    // -- Icon Generators --
-    const createOrderIcon = (status: string, index?: number) => {
-        if (typeof window === 'undefined') return undefined
-        const L = require('leaflet')
-
-        const colors = {
-            pending: '#eab308',
-            assigned: '#3b82f6',
-            in_progress: '#a855f7',
-            delivered: '#22c55e',
-            cancelled: '#ef4444',
-        }
-        const color = colors[status as keyof typeof colors] || '#3b82f6'
-
-        // If specific driver selected, show sequence number
-        if (index !== undefined) {
-            return new L.divIcon({
-                className: 'custom-marker',
-                html: `
-                    <div style="
-                        background-color: ${color}; 
-                        color: white; 
-                        width: 28px; 
-                        height: 28px; 
-                        border-radius: 50%; 
-                        display: flex; 
-                        align-items: center; 
-                        justify-content: center; 
-                        font-weight: bold; 
-                        font-family: sans-serif;
-                        font-size: 14px;
-                        border: 2px solid white; 
-                        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-                    ">
-                        ${index}
-                    </div>
-                `,
-                iconSize: [28, 28],
-                iconAnchor: [14, 14],
-                popupAnchor: [0, -14]
-            })
-        }
-
-        // Default Teardrop Pin
-        return new L.divIcon({
-            className: 'custom-marker',
-            html: `
-                <svg width="32" height="42" viewBox="0 0 32 42" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M16 0C7.2 0 0 7.2 0 16c0 11 16 26 16 26s16-15 16-26c0-8.8-7.2-16-16-16z" 
-                          fill="${color}" stroke="white" stroke-width="2"/>
-                    <circle cx="16" cy="16" r="6" fill="white"/>
-                </svg>`,
-            iconSize: [32, 42], iconAnchor: [16, 42], popupAnchor: [0, -42]
-        })
-    }
-
-    const createDriverIcon = (isOnline: boolean) => {
-        if (typeof window === 'undefined') return undefined
-        const L = require('leaflet')
-
-        return new L.divIcon({
-            className: 'driver-marker',
-            html: `
-                <div style="
-                    background-color: ${isOnline ? '#22c55e' : '#64748b'}; 
-                    width: 36px; height: 36px; 
-                    border-radius: 50%; 
-                    display: flex; align-items: center; justify-content: center; 
-                    border: 2px solid white; 
-                    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-                    z-index: 1000;
-                ">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/>
-                        <path d="M15 18H9"/>
-                        <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/>
-                        <circle cx="17" cy="18" r="2"/>
-                        <circle cx="7" cy="18" r="2"/>
-                    </svg>
-                </div>`,
-            iconSize: [36, 36], iconAnchor: [18, 18], popupAnchor: [0, -20]
-        })
-    }
 
     // Filter logic
     const displayedOrders = useMemo(() => {
@@ -157,39 +148,31 @@ export default function InteractiveMap({ orders, drivers, selectedDriverId, user
         return drivers.filter(d => d.id === selectedDriverId)
     }, [drivers, selectedDriverId])
 
-    // Route Line (Polyline)
-    // Connecting Driver Location -> Order 1 -> Order 2 ...
     const routePositions = useMemo(() => {
         if (!selectedDriverId || displayedDrivers.length === 0 || displayedOrders.length === 0) return []
-
         const driver = displayedDrivers[0]
-        if (!driver.current_lat || !driver.current_lng) return []
+        if (!driver.current_lat || !driver.current_lng) return [] // if no current location, maybe use start location?
 
         const points: [number, number][] = []
-        // Start: Driver Location
         points.push([driver.current_lat, driver.current_lng])
 
-        // Stops: Orders (Assuming they are sorted by route_index or creation for now)
-        // Ideally displayedOrders should be sorted before this.
         const sortedOrders = [...displayedOrders].sort((a, b) => (a.route_index || 0) - (b.route_index || 0))
-
         sortedOrders.forEach(o => {
             if (o.latitude && o.longitude) points.push([Number(o.latitude), Number(o.longitude)])
         })
-
         return points
     }, [displayedDrivers, displayedOrders, selectedDriverId])
 
-    const isDark = theme === 'dark'
 
-    if (!userLocation) return <div className="h-full w-full bg-slate-100 dark:bg-slate-900 animate-pulse" />
+    if (!userLocation) return <div className="h-full w-full bg-slate-100 dark:bg-slate-900 animate-pulse flex items-center justify-center"><MapPin className="animate-bounce" /></div>
 
     return (
         <MapContainer
             center={userLocation}
             zoom={13}
             className="h-full w-full bg-slate-100 dark:bg-slate-900 z-0"
-            zoomControl={false} // We can add custom zoom control if needed, or leave default
+            style={{ height: '100%', width: '100%', minHeight: '100%' }}
+            zoomControl={false}
         >
             <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -205,7 +188,6 @@ export default function InteractiveMap({ orders, drivers, selectedDriverId, user
                 selectedDriverId={selectedDriverId}
             />
 
-            {/* Route Line */}
             {selectedDriverId && routePositions.length > 1 && (
                 <Polyline
                     positions={routePositions}
@@ -216,7 +198,6 @@ export default function InteractiveMap({ orders, drivers, selectedDriverId, user
                 />
             )}
 
-            {/* Order Markers */}
             {displayedOrders.map((order, index) => (
                 order.latitude && order.longitude && (
                     <Marker
@@ -243,14 +224,13 @@ export default function InteractiveMap({ orders, drivers, selectedDriverId, user
                 )
             ))}
 
-            {/* Driver Markers */}
             {displayedDrivers.map((driver) => (
                 driver.current_lat && driver.current_lng && (
                     <Marker
                         key={driver.id}
                         position={[driver.current_lat, driver.current_lng]}
                         icon={createDriverIcon(driver.is_online || false)}
-                        zIndexOffset={1000} // Drivers on top
+                        zIndexOffset={1000}
                     >
                         <Popup>
                             <div className="p-2 min-w-[200px]">

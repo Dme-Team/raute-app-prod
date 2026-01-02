@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import Link from "next/link"
-import { Plus, Search, Filter, Package, MapPin, Calendar, User as UserIcon, Truck, Navigation2, CheckCircle2, Power, Sparkles, Camera, Loader2, ArrowRight, Edit, Settings, List } from "lucide-react"
+import { Plus, Search, Filter, Package, MapPin, Calendar, User as UserIcon, Truck, Navigation2, CheckCircle2, Power, Sparkles, Camera, Loader2, ArrowRight, Edit, Settings, List, Clock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { supabase, type Order } from "@/lib/supabase"
@@ -21,6 +21,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { DriverSetupGuide } from "@/components/driver-setup-guide"
 import { StyledPhoneInput } from "@/components/ui/styled-phone-input"
 import { isValidPhoneNumber } from "react-phone-number-input"
+import { DriverActivityHistory } from "@/components/driver-activity-history"
+import { format } from "date-fns"
 
 const statusColors = {
     pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
@@ -81,6 +83,51 @@ export default function OrdersPage() {
         filterOrders()
     }, [orders, searchQuery, statusFilter])
 
+    // 🔔 REAL-TIME NOTIFICATIONS FOR DRIVER
+    useEffect(() => {
+        if (!driverId) return
+
+        console.log("🎧 Listening for assignments for driver:", driverId)
+
+        const channel = supabase
+            .channel(`driver-notifications-${driverId}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: '*', // Listen to INSERT and UPDATE
+                    schema: 'public',
+                    table: 'orders',
+                    filter: `driver_id=eq.${driverId}`
+                },
+                (payload) => {
+                    const newRecord = payload.new as Order
+                    const eventType = payload.eventType
+
+                    // Trigger Refresh
+                    fetchData()
+
+                    // 1. New Assignment (INSERT or UPDATE from null to me)
+                    if (eventType === 'INSERT' || (eventType === 'UPDATE' && newRecord.status === 'assigned')) {
+                        // Only notify if it's 'assigned' (ignore if I just marked it delivered myself)
+                        // Simple check: If I am the one viewing this page, and status is assigned, it means Manager assigned it.
+                        // (Unless I assigned it myself? Drivers usually don't assign themselves).
+                        if (newRecord.status === 'assigned') {
+                            toast({
+                                title: "🎉 New Order Assigned!",
+                                description: `Customer: ${newRecord.customer_name}`,
+                                type: "success"
+                            })
+                        }
+                    }
+                }
+            )
+            .subscribe()
+
+        return () => {
+            supabase.removeChannel(channel)
+        }
+    }, [driverId])
+
     async function fetchData() {
         try {
             setIsLoading(true)
@@ -115,13 +162,14 @@ export default function OrdersPage() {
                 }
 
                 setDriverId(driverData.id)
-                setIsOnline(driverData.is_online || false)
+                // IMPORTANT: Set initial state from DB to prevent flip-flopping
+                setIsOnline(driverData.is_online === true)
 
                 const { data, error } = await supabase
                     .from('orders')
                     .select('*')
                     .eq('driver_id', driverData.id)
-                    .neq('status', 'cancelled') // filtered
+                    // .neq('status', 'cancelled') // Removed to show history
                     .order('route_index', { ascending: true }) // PRIMARY sort: Route Sequence
                     .order('priority', { ascending: false })   // Fallback
                     .order('created_at', { ascending: false }) // Fallback
@@ -161,24 +209,48 @@ export default function OrdersPage() {
     }
 
     async function toggleOnlineStatus() {
-        if (!driverId) return
+        if (!driverId) {
+            console.error("❌ No Driver ID found! Cannot toggle status.")
+            toast({ title: "Error", description: "Driver profile not found.", type: "error" })
+            return
+        }
 
-        const newStatus = !isOnline
-        setIsOnline(newStatus) // Optimistic update
+        const currentStatus = isOnline
+        const newStatus = !currentStatus
+
+        console.log(`🔄 Toggling status: ${currentStatus} -> ${newStatus} for Driver ID: ${driverId}`)
+
+        // 1. Optimistic Update
+        setIsOnline(newStatus)
 
         try {
-            const { error } = await supabase
+            // 2. Perform DB Update
+            const { data, error } = await supabase
                 .from('drivers')
                 .update({ is_online: newStatus })
                 .eq('id', driverId)
+                .select()
 
-            if (error) {
-                setIsOnline(!newStatus) // Revert on error
-                throw error
-            }
-        } catch (error) {
-            console.error("Error toggling status:", error)
-            toast({ title: "Failed to update status", type: "error" })
+            if (error) throw error
+
+            // 3. Log Activity
+            await supabase.from('driver_activity_logs').insert({
+                driver_id: driverId,
+                status: newStatus ? 'online' : 'offline',
+                timestamp: new Date().toISOString()
+            })
+
+            console.log("✅ Status updated successfully in DB:", data)
+            toast({ title: newStatus ? "You are ONLINE 🟢" : "You are OFFLINE ⚫", type: "success" })
+
+        } catch (error: any) {
+            console.error("💥 Catch Block Error:", error)
+            setIsOnline(currentStatus) // Revert UI
+            toast({
+                title: "Failed to update status",
+                description: error.message || "Database permission denied",
+                type: "error"
+            })
         }
     }
 
@@ -473,18 +545,37 @@ export default function OrdersPage() {
                     </div>
 
                     {/* Status Toggle Button */}
-                    <button
-                        onClick={toggleOnlineStatus}
-                        className={cn(
-                            "flex items-center gap-2 px-4 py-2 rounded-full shadow-sm border transition-all text-sm font-bold",
-                            isOnline
-                                ? "bg-green-500/10 text-green-600 border-green-200 dark:border-green-900"
-                                : "bg-muted text-muted-foreground border-border"
-                        )}
-                    >
-                        <div className={cn("w-2 h-2 rounded-full transition-colors", isOnline ? "bg-green-500 animate-pulse" : "bg-slate-400")} />
-                        {isOnline ? "ONLINE" : "OFFLINE"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <Sheet>
+                            <SheetTrigger asChild>
+                                <Button variant="outline" size="sm" className="h-9 w-9 p-0 rounded-full border-dashed border-2">
+                                    <Calendar size={16} className="text-slate-400" />
+                                </Button>
+                            </SheetTrigger>
+                            <SheetContent>
+                                <SheetHeader>
+                                    <SheetTitle>Activity History</SheetTitle>
+                                    <SheetDescription>Your recent online/offline activity logs.</SheetDescription>
+                                </SheetHeader>
+                                <div className="mt-6 space-y-4">
+                                    <DriverActivityHistory driverId={driverId} />
+                                </div>
+                            </SheetContent>
+                        </Sheet>
+
+                        <button
+                            onClick={toggleOnlineStatus}
+                            className={cn(
+                                "flex items-center gap-2 px-4 py-2 rounded-full shadow-sm border transition-all text-sm font-bold",
+                                isOnline
+                                    ? "bg-green-500/10 text-green-600 border-green-200 dark:border-green-900"
+                                    : "bg-muted text-muted-foreground border-border"
+                            )}
+                        >
+                            <div className={cn("w-2 h-2 rounded-full transition-colors", isOnline ? "bg-green-500 animate-pulse" : "bg-slate-400")} />
+                            {isOnline ? "ONLINE" : "OFFLINE"}
+                        </button>
+                    </div>
                 </div>
 
                 {/* Offline Warning Banner */}
@@ -531,9 +622,9 @@ export default function OrdersPage() {
                 </div>
 
                 {/* Status Filter (remains) */}
-                <div className="flex bg-muted p-1 rounded-xl shadow-inner mb-4">
-                    {["all", "assigned", "delivered"].map((status) => (
-                        <button key={status} onClick={() => setStatusFilter(status)} className={cn("flex-1 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all", statusFilter === status ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+                <div className="flex bg-muted p-1 rounded-xl shadow-inner mb-4 overflow-x-auto">
+                    {["all", "assigned", "delivered", "cancelled"].map((status) => (
+                        <button key={status} onClick={() => setStatusFilter(status)} className={cn("flex-1 px-3 py-2 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all min-w-[70px]", statusFilter === status ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
                             {status === 'all' ? 'All' : status}
                         </button>
                     ))}
@@ -549,22 +640,31 @@ export default function OrdersPage() {
                                 <p className="text-muted-foreground font-medium">No orders found</p>
                             </div>
                         ) : (
-                            filteredOrders
-                                // Sort locally if API sort isn't enough (e.g. detailed status logic)
-                                // But ideally we trust the query. Let's ensure visuals are correct.
-                                .sort((a, b) => (a.route_index || 999) - (b.route_index || 999))
-                                .map((order, index) => {
-                                    const isNext = index === 0 && (order.status === 'assigned' || order.status === 'pending')
+                            (() => {
+                                // 1. Prepare Sorted List
+                                const sortedOrders = [...filteredOrders].sort((a, b) => (a.route_index || 999) - (b.route_index || 999))
+
+                                // 2. Identify NEXT Active Order
+                                const nextOrder = sortedOrders.find(o => o.status === 'assigned' || o.status === 'pending' || o.status === 'in_progress')
+
+                                return sortedOrders.map((order) => {
+                                    const isNext = nextOrder?.id === order.id
+
+                                    // Safe Status Color Lookup
+                                    const statusColorClass = statusColors[order.status as keyof typeof statusColors] || "bg-gray-100 text-gray-500 border-gray-200"
+
                                     return (
                                         <Link key={order.id} href={`/order-details?id=${order.id}`} className="block group">
                                             <div className={cn(
                                                 "bg-card p-5 rounded-2xl shadow-sm border transition-all relative overflow-hidden",
-                                                isNext ? "border-primary shadow-md ring-1 ring-primary/20" : "border-border hover:shadow-md hover:border-primary/50"
+                                                isNext ? "border-primary shadow-md ring-1 ring-primary/20" : "border-border hover:shadow-md hover:border-primary/50",
+                                                (order.status === 'delivered' || order.status === 'cancelled') && "opacity-75 bg-slate-50 dark:bg-slate-900/50" // Dim completed/cancelled
                                             )}>
                                                 {/* Status Stripe */}
                                                 <div className={cn("absolute left-0 top-0 bottom-0 w-1.5",
                                                     order.status === 'delivered' ? 'bg-green-500' :
-                                                        order.status === 'in_progress' ? 'bg-purple-500' : 'bg-blue-500'
+                                                        order.status === 'cancelled' ? 'bg-red-500' :
+                                                            order.status === 'in_progress' ? 'bg-purple-500' : 'bg-blue-500'
                                                 )} />
 
                                                 <div className="flex justify-between items-start mb-3 pl-3">
@@ -580,12 +680,18 @@ export default function OrdersPage() {
 
                                                     {/* Time Window Badge */}
                                                     {order.time_window_start ? (
-                                                        <div className="flex items-center gap-1 bg-orange-50 text-orange-700 px-2 py-1 rounded-md border border-orange-100 text-[10px] font-bold uppercase">
+                                                        <div className="flex items-center gap-1 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 px-2 py-1 rounded-md border border-orange-100 dark:border-orange-900/50 text-[10px] font-bold uppercase">
                                                             <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
                                                             {order.time_window_start.slice(0, 5)} - {order.time_window_end?.slice(0, 5)}
                                                         </div>
                                                     ) : (
-                                                        <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-bold uppercase", statusColors[order.status].replace('bg-', 'bg-opacity-10 bg-').replace('border-', 'border-opacity-20 border-'))}>{order.status.replace('_', ' ')}</span>
+                                                        <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border",
+                                                            statusColorClass
+                                                                .replace('bg-', 'bg-opacity-10 bg-')
+                                                                .replace('border-', 'border-opacity-20 border-')
+                                                        )}>
+                                                            {order.status.replace('_', ' ')}
+                                                        </span>
                                                     )}
                                                 </div>
 
@@ -599,7 +705,21 @@ export default function OrdersPage() {
 
                                                 <div className="pl-3 pt-3 border-t border-border flex items-center justify-between">
                                                     <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
-                                                        {isNext && <span className="text-primary font-bold flex items-center gap-1">🚀 NEXT STOP</span>}
+                                                        {isNext ? (
+                                                            <span className="text-primary font-bold flex items-center gap-1 animate-pulse">
+                                                                🚀 NEXT STOP
+                                                            </span>
+                                                        ) : order.status === 'delivered' ? (
+                                                            <span className="text-green-600 font-bold flex items-center gap-1">
+                                                                <CheckCircle2 size={12} /> COMPLETED
+                                                            </span>
+                                                        ) : order.status === 'cancelled' ? (
+                                                            <span className="text-red-600 font-bold flex items-center gap-1">
+                                                                <XCircle size={12} /> CANCELLED
+                                                            </span>
+                                                        ) : (
+                                                            <span>Tap for details</span>
+                                                        )}
                                                     </div>
                                                     <div className={cn(
                                                         "h-8 w-8 rounded-full flex items-center justify-center transition-colors",
@@ -612,6 +732,7 @@ export default function OrdersPage() {
                                         </Link>
                                     )
                                 })
+                            })()
                         )}
                     </div>
                 ) : (
@@ -950,6 +1071,26 @@ export default function OrdersPage() {
                                             <div className="flex items-center gap-2">
                                                 <Calendar size={14} className="flex-shrink-0 text-muted-foreground/70" />
                                                 <span>{new Date(order.delivery_date).toLocaleDateString()}</span>
+                                            </div>
+                                        )}
+                                        {/* Timestamp for Manager Tracking */}
+                                        {(order.delivered_at || order.time_window_start) && (
+                                            <div className="flex items-center gap-2 font-medium">
+                                                {order.status === 'delivered' && order.delivered_at ? (
+                                                    <>
+                                                        <CheckCircle2 size={14} className="flex-shrink-0 text-green-600 dark:text-green-500" />
+                                                        <span className="text-green-700 dark:text-green-400 text-xs font-bold">
+                                                            Delivered at {format(new Date(order.delivered_at), 'h:mm a')}
+                                                        </span>
+                                                    </>
+                                                ) : (order.time_window_start) ? (
+                                                    <>
+                                                        <Clock size={14} className="flex-shrink-0 text-orange-600 dark:text-orange-400" />
+                                                        <span className="text-orange-700 dark:text-orange-300 text-xs font-bold">
+                                                            Window: {order.time_window_start?.slice(0, 5)} - {order.time_window_end?.slice(0, 5)}
+                                                        </span>
+                                                    </>
+                                                ) : null}
                                             </div>
                                         )}
                                     </div>

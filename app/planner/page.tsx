@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { supabase, type Order, type Driver } from '@/lib/supabase'
@@ -31,28 +31,26 @@ const MapContainer = dynamic(() => import('react-leaflet').then(m => m.MapContai
 const TileLayer = dynamic(() => import('react-leaflet').then(m => m.TileLayer), { ssr: false })
 const Marker = dynamic(() => import('react-leaflet').then(m => m.Marker), { ssr: false })
 const Popup = dynamic(() => import('react-leaflet').then(m => m.Popup), { ssr: false })
-const useMap = dynamic(() => import('react-leaflet').then(m => m.useMap), { ssr: false }) // Import useMap
+const Polyline = dynamic(() => import('react-leaflet').then(m => m.Polyline), { ssr: false })
+// const useMap = dynamic(() => import('react-leaflet').then(m => m.useMap), { ssr: false }) // Disabled for simpler implementation
 
-// Helper to update map view when center changes
-function MapUpdater({ center }: { center: [number, number] }) {
-    const map = useMap() as any
-    useEffect(() => {
-        if (map) {
-            map.setView(center, 13)
-        }
-    }, [center, map])
-    return null
-}
+
 
 // Helper to fix Leaflet icons in Next.js
-if (typeof window !== 'undefined') {
-    const L = require('leaflet')
-    delete (L.Icon.Default.prototype as any)._getIconUrl
-    L.Icon.Default.mergeOptions({
-        iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-        iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-    })
+// We'll run this in the component via useEffect to avoid top-level issues
+const fixLeafletIcons = () => {
+    if (typeof window !== 'undefined') {
+        const L = require('leaflet')
+        // Check if already fixed to avoid errors
+        if ((L.Icon.Default.prototype as any)._getIconUrl) {
+            delete (L.Icon.Default.prototype as any)._getIconUrl
+            L.Icon.Default.mergeOptions({
+                iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+                iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+            })
+        }
+    }
 }
 
 /**
@@ -73,7 +71,7 @@ function DraggableOrderCard({ order, isOverlay = false, onViewDetails }: { order
             {...listeners}
             {...attributes}
             onDoubleClick={() => onViewDetails?.(order)} // Quick View on Double Click
-            className={`cursor-grab active:cursor-grabbing hover:border-primary transition-colors group ${isOverlay ? 'shadow-2xl scale-105 rotate-2 border-primary' : ''} ${order.locked_to_driver ? 'border-l-4 border-l-red-500' : ''}`}
+            className={`cursor-grab active:cursor-grabbing hover:border-primary dark:hover:border-primary transition-colors group ${isOverlay ? 'shadow-2xl scale-105 rotate-2 border-primary' : ''} ${order.locked_to_driver ? 'border-l-4 border-l-red-500' : ''} ${order.status === 'cancelled' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-900 opacity-80' : 'bg-card dark:bg-slate-900 border-border dark:border-slate-800'}`}
         >
             <CardContent className="p-3">
                 <div className="flex justify-between items-start mb-1">
@@ -82,8 +80,8 @@ function DraggableOrderCard({ order, isOverlay = false, onViewDetails }: { order
                         {order.locked_to_driver && <Lock size={10} className="text-red-500" />}
                     </span>
                     <div className="flex items-center gap-1">
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${order.status === 'assigned' ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-yellow-100 text-yellow-800 border-yellow-200'}`}>
-                            {order.status}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${order.status === 'cancelled' ? 'bg-red-100 text-red-800 border-red-200 font-bold' : order.status === 'assigned' ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-yellow-100 text-yellow-800 border-yellow-200'}`}>
+                            {order.status === 'cancelled' ? 'FAILED' : order.status}
                         </span>
                         {/* Open in New Tab Button */}
                         <button
@@ -136,7 +134,7 @@ function DroppableDriverContainer({ driver, orders, children }: { driver: Driver
     return (
         <div
             ref={setNodeRef}
-            className={`bg-card border rounded-md p-2 transition-colors ${isOver ? 'border-primary bg-primary/5 ring-2 ring-primary/20' : 'border-border'}`}
+            className={`bg-card dark:bg-slate-900 border rounded-md p-2 transition-colors ${isOver ? 'border-primary bg-primary/5 dark:bg-primary/20 ring-2 ring-primary/20' : 'border-border dark:border-slate-800'}`}
         >
             <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
@@ -174,7 +172,7 @@ function UnassignedArea({ children, count }: { children: React.ReactNode, count:
                 <AlertCircle size={12} /> Unassigned ({count})
             </h2>
             <div
-                className={`flex-1 overflow-y-auto p-4 space-y-3 transition-colors ${isOver ? 'bg-primary/5' : ''}`}
+                className={`flex-1 overflow-y-auto p-4 space-y-3 transition-colors ${isOver ? 'bg-primary/5 dark:bg-primary/10' : ''}`}
             >
                 {count === 0 && !isOver ? (
                     <div className="text-center py-8 text-muted-foreground text-sm border border-dashed rounded-lg bg-muted/50">
@@ -214,6 +212,7 @@ export default function PlannerPage() {
     )
 
     useEffect(() => {
+        fixLeafletIcons() // Run Leaflet Fix
         fetchData()
 
         // Realtime Subscription
@@ -240,7 +239,7 @@ export default function PlannerPage() {
 
             // Get Active Data
             const [ordersRes, driversRes] = await Promise.all([
-                supabase.from('orders').select('*').eq('company_id', user.company_id).neq('status', 'cancelled').neq('status', 'delivered'),
+                supabase.from('orders').select('*').eq('company_id', user.company_id).neq('status', 'delivered'),
                 supabase.from('drivers').select('*').eq('company_id', user.company_id).eq('status', 'active')
             ])
 
@@ -282,8 +281,11 @@ export default function PlannerPage() {
             // dynamic import the optimizer only when needed
             const { optimizeRoute } = await import('@/lib/optimizer')
 
+            // Filter out cancelled/delivered orders from auto-optimization
+            const ordersToOptimize = orders.filter(o => o.status !== 'cancelled' && o.status !== 'delivered')
+
             // Run the algorithm
-            const result = await optimizeRoute(orders, drivers)
+            const result = await optimizeRoute(ordersToOptimize, drivers)
 
             // Update Local State
             setOrders(result.orders)
@@ -378,6 +380,13 @@ export default function PlannerPage() {
         }
     }
 
+    // Map Theme
+    const [mapTheme, setMapTheme] = useState<'light' | 'dark'>(() => theme === 'dark' ? 'dark' : 'light')
+
+    function toggleMapTheme() {
+        setMapTheme(prev => prev === 'light' ? 'dark' : 'light')
+    }
+
     // Derived State
     const unassignedOrders = orders.filter(o => !o.driver_id)
     const activeDragOrder = orders.find(o => o.id === activeDragId)
@@ -391,17 +400,17 @@ export default function PlannerPage() {
         >
             <div className="flex h-screen w-full bg-background overflow-hidden">
                 {/* SIDEBAR */}
-                <div className="w-96 border-r border-border flex flex-col bg-card z-20 shadow-xl">
-                    <div className="p-4 border-b border-border bg-sidebar">
-                        <h1 className="text-xl font-bold tracking-tight mb-1">Route Planner</h1>
+                <div className="w-96 border-r border-border flex flex-col bg-card dark:bg-card z-20 shadow-xl transition-colors">
+                    <div className="p-4 border-b border-border bg-muted/20 dark:bg-muted/10">
+                        <h1 className="text-xl font-bold tracking-tight mb-1 text-foreground">Route Planner</h1>
                         <p className="text-xs text-muted-foreground">Drag orders to assign manually.</p>
                     </div>
 
-                    <div className="p-4 border-b border-border bg-muted/20">
+                    <div className="p-4 border-b border-border bg-card">
                         <Button
                             onClick={handleOptimize}
                             disabled={isLoading}
-                            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md transition-all active:scale-95"
+                            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md transition-all active:scale-95 border-0"
                         >
                             <Sparkles size={16} className={`mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                             {isLoading ? 'Optimizing...' : 'Smart Optimize'}
@@ -440,11 +449,24 @@ export default function PlannerPage() {
 
                 {/* MAP AREA */}
                 <div className="flex-1 relative z-10">
+                    {/* Map Theme Toggle */}
+                    <div className="absolute top-4 right-4 z-[500]">
+                        <Button
+                            variant="secondary"
+                            size="icon"
+                            className="shadow-lg h-10 w-10 rounded-full border border-primary/20 bg-background/80 backdrop-blur"
+                            onClick={toggleMapTheme}
+                            title="Toggle Map Theme"
+                        >
+                            {mapTheme === 'dark' ? '🌙' : '☀️'}
+                        </Button>
+                    </div>
+
                     <div style={{ height: '100%', width: '100%' }}>
                         <MapContainer key={`${mapCenter[0]}-${mapCenter[1]}`} center={mapCenter} zoom={13} style={{ height: '100%', width: '100%' }}>
                             <TileLayer
                                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url={theme === 'dark'
+                                url={mapTheme === 'dark'
                                     ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
                                     : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"}
                             />
@@ -454,11 +476,11 @@ export default function PlannerPage() {
                                     <Marker
                                         key={`driver-${driver.id}`}
                                         position={[driver.default_start_lat, driver.default_start_lng]}
-                                        icon={L.icon({
+                                        icon={typeof window !== 'undefined' ? require('leaflet').icon({
                                             iconUrl: 'https://cdn-icons-png.flaticon.com/512/713/713342.png',
                                             iconSize: [30, 30],
-                                            className: 'hue-rotate-180' // Distinct color for drivers
-                                        })}
+                                            className: 'hue-rotate-180'
+                                        }) : undefined}
                                     >
                                         <Popup>
                                             <div className="p-1">
@@ -469,26 +491,76 @@ export default function PlannerPage() {
                                     </Marker>
                                 )
                             ))}
+                            {/* Driver Routes (Polylines) */}
+                            {drivers.map((driver, index) => {
+                                const driverOrders = orders
+                                    .filter(o => o.driver_id === driver.id && o.latitude && o.longitude)
+                                    .sort((a, b) => (a.route_index || 0) - (b.route_index || 0))
+
+                                if (driverOrders.length === 0) return null
+
+                                const positions: [number, number][] = []
+
+                                // Start from depot if available
+                                if (driver.default_start_lat && driver.default_start_lng) {
+                                    positions.push([driver.default_start_lat, driver.default_start_lng])
+                                }
+
+                                // Add Order points
+                                driverOrders.forEach(o => positions.push([o.latitude!, o.longitude!]))
+
+                                // Assign color based on driver index
+                                const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1']
+                                const color = colors[index % colors.length]
+
+                                return (
+                                    <React.Fragment key={`route-${driver.id}`}>
+                                        <Polyline positions={positions} pathOptions={{ color, weight: 4, opacity: 0.7 }} />
+                                    </React.Fragment>
+                                )
+                            })}
+
                             {/* Order Markers */}
-                            {orders.map(order => (
-                                order.latitude && order.longitude && (
+                            {orders.map(order => {
+                                if (!order.latitude || !order.longitude) return null
+
+                                const isCancelled = order.status === 'cancelled'
+                                const customIcon = (typeof window !== 'undefined' && isCancelled)
+                                    ? require('leaflet').icon({
+                                        iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+                                        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+                                        iconSize: [25, 41],
+                                        iconAnchor: [12, 41],
+                                        popupAnchor: [1, -34],
+                                        className: 'hue-rotate-[140deg]' // Blue -> Red shift
+                                    })
+                                    : null
+
+                                return (
                                     <Marker
                                         key={order.id}
                                         position={[order.latitude, order.longitude]}
-                                    // Simple icon logic (color based on assignment)
+                                        {...(customIcon ? { icon: customIcon } : {})}
                                     >
                                         <Popup>
                                             <div className="p-1">
                                                 <strong className="block text-sm">{order.customer_name}</strong>
                                                 <div className="text-xs text-slate-500 mb-1">{order.address}</div>
-                                                <div className={`text-[10px] font-bold px-1 rounded w-fit ${order.driver_id ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                                    {order.driver_id ? 'Assigned' : 'Unassigned'}
+                                                <div className="flex gap-1">
+                                                    <div className={`text-[10px] font-bold px-1 rounded w-fit ${order.driver_id ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                                        {order.driver_id ? 'Assigned' : 'Unassigned'}
+                                                    </div>
+                                                    {order.route_index !== null && order.driver_id && (
+                                                        <div className="text-[10px] font-bold px-1.5 rounded-full bg-slate-800 text-white">
+                                                            #{order.route_index}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         </Popup>
                                     </Marker>
                                 )
-                            ))}
+                            })}
                         </MapContainer>
                     </div>
                 </div>

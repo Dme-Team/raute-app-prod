@@ -38,7 +38,9 @@ export type User = {
     company_id: string
     email: string
     full_name: string
-    role: 'admin' | 'manager' | 'driver'
+    role: 'admin' | 'manager' | 'driver' | 'dispatcher'
+    status?: 'active' | 'suspended'
+    permissions?: Record<string, boolean>
     created_at: string
     updated_at: string
 }
@@ -106,4 +108,15 @@ export type Order = {
     created_at: string
     updated_at: string
 }
+
+export type DriverActivityLog = {
+    id: string
+    driver_id: string
+    status: 'online' | 'offline' | 'working'
+    timestamp: string
+    metadata: any
+}
+
+export type Permission = 'create_orders' | 'delete_orders' | 'view_drivers' | 'manage_drivers' | 'view_map' | 'access_settings'
+
 

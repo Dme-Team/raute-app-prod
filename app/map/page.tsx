@@ -7,7 +7,7 @@ import { Menu, Navigation } from "lucide-react"
 import { supabase, type Order, type Driver } from "@/lib/supabase"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet"
 import { FleetPanel } from "@/components/map/fleet-panel"
 
 // Dynamically import the map component to avoid SSR issues
@@ -34,7 +34,7 @@ export default function MapPage() {
 
     // UI State
     const [selectedDriverId, setSelectedDriverId] = useState<string | null>(searchParams.get('driverId'))
-    const [userLocation, setUserLocation] = useState<[number, number] | null>(null)
+    const [userLocation, setUserLocation] = useState<[number, number] | null>([34.0522, -118.2437]) // Default to generic location to avoid loading state
     const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false)
 
     // Initial Load & Subscription
@@ -126,6 +126,21 @@ export default function MapPage() {
         setIsMobilePanelOpen(false) // Close sheet on mobile selection
     }
 
+    // Map Theme State
+    const [mapTheme, setMapTheme] = useState<'light' | 'dark'>(() => {
+        // Default to system theme match or light if prefer
+        return theme === 'dark' ? 'dark' : 'light'
+    })
+
+    // Update map theme when system theme changes, unless user manually toggled? 
+    // Actually simplicity: separate toggle means manual control usually. 
+    // Let's just default to 'light' or match theme initially.
+
+    // Toggle Button Handler
+    const toggleMapTheme = () => {
+        setMapTheme(prev => prev === 'light' ? 'dark' : 'light')
+    }
+
     return (
         <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-background relative">
             {/* Desktop Sidebar */}
@@ -147,6 +162,7 @@ export default function MapPage() {
                         </Button>
                     </SheetTrigger>
                     <SheetContent side="bottom" className="h-[60vh] p-0 rounded-t-xl z-[1000]">
+                        <SheetTitle className="sr-only">Fleet Overview</SheetTitle>
                         <FleetPanel
                             drivers={drivers}
                             orders={orders}
@@ -157,6 +173,19 @@ export default function MapPage() {
                 </Sheet>
             </div>
 
+            {/* Map Theme Toggle (Separate Button) */}
+            <div className="absolute top-4 right-4 z-[400]">
+                <Button
+                    variant="secondary"
+                    size="icon"
+                    className="shadow-lg h-10 w-10 rounded-full border border-primary/20 bg-background/80 backdrop-blur"
+                    onClick={toggleMapTheme}
+                    title="Toggle Map Theme"
+                >
+                    {mapTheme === 'dark' ? '🌙' : '☀️'}
+                </Button>
+            </div>
+
             {/* Main Map Area */}
             <div className="flex-1 relative h-full">
                 <InteractiveMap
@@ -164,6 +193,7 @@ export default function MapPage() {
                     drivers={drivers}
                     selectedDriverId={selectedDriverId}
                     userLocation={userLocation}
+                    forceTheme={mapTheme}
                 />
 
                 {/* Info Overlay (Visible when Driver Selected) */}

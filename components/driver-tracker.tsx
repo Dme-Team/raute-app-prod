@@ -1,92 +1,25 @@
-"use client"
-
-import { useEffect, useRef } from "react"
-import { supabase } from "@/lib/supabase"
+import { useEffect } from "react" // Removing useRef
+import { geoService } from "@/lib/geo-service"
 
 interface DriverTrackerProps {
     driverId: string
     isOnline: boolean
+    userId?: string
 }
 
-export function DriverTracker({ driverId, isOnline }: DriverTrackerProps) {
-    const watchId = useRef<number | null>(null)
-    const lastUpdateRef = useRef<number>(0)
-    const UPDATE_INTERVAL = 10000 // 10 seconds throttle
+export function DriverTracker({ driverId, isOnline, userId }: DriverTrackerProps) {
+    useEffect(() => {
+        if (userId) geoService.init(userId)
+    }, [userId])
 
     useEffect(() => {
-        if (!isOnline || !driverId) {
-            stopTracking()
-            return
+        if (isOnline) {
+            geoService.startTracking()
+        } else {
+            geoService.stopTracking()
         }
+        return () => geoService.stopTracking()
+    }, [isOnline])
 
-        startTracking()
-
-        return () => stopTracking()
-    }, [isOnline, driverId])
-
-    function startTracking() {
-        if (!navigator.geolocation) {
-            console.error("Geolocation is not supported by this browser.")
-            return
-        }
-
-        console.log("📍 Starting location tracking...")
-
-        // Watch Position
-        watchId.current = navigator.geolocation.watchPosition(
-            handlePositionUpdate,
-            (error) => console.error("Location error:", error),
-            {
-                enableHighAccuracy: true,
-                timeout: 5000,
-                maximumAge: 0
-            }
-        )
-    }
-
-    function stopTracking() {
-        if (watchId.current !== null) {
-            navigator.geolocation.clearWatch(watchId.current)
-            watchId.current = null
-            console.log("🛑 Stopped location tracking.")
-        }
-    }
-
-    async function handlePositionUpdate(position: GeolocationPosition) {
-        const now = Date.now()
-        // Throttle updates
-        if (now - lastUpdateRef.current < UPDATE_INTERVAL) {
-            return
-        }
-
-        try {
-            const { latitude, longitude } = position.coords
-
-            // Only update if we have valid coords
-            if (latitude && longitude) {
-                lastUpdateRef.current = now
-
-                // Optimistic update (fire and forget mostly, but we log errors)
-                const { error } = await supabase
-                    .from('drivers')
-                    .update({
-                        current_lat: latitude,
-                        current_lng: longitude,
-                        last_location_update: new Date().toISOString()
-                    })
-                    .eq('id', driverId)
-
-                if (error) {
-                    console.error("Failed to update location in DB:", error)
-                } else {
-                    console.log("📡 Location synced:", latitude, longitude)
-                }
-            }
-        } catch (err) {
-            console.error("Error processing position update:", err)
-        }
-    }
-
-    // Render nothing (headless component)
     return null
 }
